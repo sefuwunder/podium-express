@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podium Express — the executive lens</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+<body>
+<div id="app">
+  <header class="appbar">
+    <div class="brand"><span class="logo">⚡</span><div><h1>Podium Express</h1><p>the executive lens</p></div></div>
+    <select id="pod-select" class="pod-select" aria-label="Choose a pod"></select>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <nav class="tabbar" role="tablist" aria-label="Sections">
+    <button class="tab active" data-view="impact" role="tab"><span class="ticon">📊</span><span>Impact</span></button>
+    <button class="tab" data-view="threads" role="tab"><span class="ticon">💬</span><span>Threads</span></button>
+    <button class="tab" data-view="focus" role="tab"><span class="ticon">🎯</span><span>Focus</span></button>
+    <button class="tab" data-view="nudges" role="tab"><span class="ticon">🔔</span><span>Nudges</span><em id="nudge-dot" class="dot" hidden></em></button>
+  </nav>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
