@@ -1,8 +1,21 @@
-# podium-express ⚡
+# podium-express
 
-The executive lens on [Podium](https://github.com/sefuwunder/podium) pods — a glossy,
-mobile-first experience focused on **time + communication impact** as it relates to
-completing pod objectives.
+The executive lens on [Podium](https://github.com/sefuwunder/podium) pods —
+refactored on [outpost](https://github.com/sefuwunder/outpost)'s architecture,
+designed like Apple made a small-group comms tool: calm, calm, calm. System
+type, one blue accent, hairlines over shadows, large titles, content first.
+
+## Architecture (outpost-shaped)
+
+- **`channels.ts`** — the Transports abstraction. Every Podium data source is
+  a leg (`fetchPods`, `fetchMessages`, …); `pollPod()` orchestrates them into
+  one snapshot. Tests inject fakes; the server wires the real HTTP client.
+- **`store.ts`** — the unified in-memory PodModel (threads, impact, focus,
+  agent output, objectives), rebuilt by `refresh()`. Views never fetch.
+- **`agent.ts`** — the embedded agent: `runAgent()` returns soft nudges plus
+  a calm morning briefing. Deterministic, explainable, never alarming.
+- **`server.ts`** — API over the model plus a background `sweep()` (60s,
+  never overlapping) that keeps models warm, outpost-style.
 
 ## The common-API contract
 
@@ -12,17 +25,18 @@ podium-express says so honestly instead of guessing.
 
 ## The four tabs
 
-- **📊 Impact** — per-member impact cards: hours vs allocation, comms volume,
-  objective touch, an explained 0–100 score, and a trend arrow. Pod hero with
-  utilization, message volume, objectives on-track, and average progress.
-- **💬 Threads** — a Relay-like unified conversation view: every pod channel
-  condensed into **one thread per person**, chronological, each message stamped
-  with the channel it was said in.
-- **🎯 Focus** — only *important* tasks reach the executive. An importance
+- **Threads** — the home view. Every pod channel condensed into **one thread
+  per person**, chronological, each message stamped with the channel it was
+  said in. Opens with the agent's briefing: what's moving, what needs you,
+  what's worth celebrating.
+- **Focus** — only *important* tasks reach the executive. An importance
   scorer (overdue, due soon, priority, objective tie-in, high-stakes topics)
   keeps busywork — "follow up", "sync", "file the admin" — out of the view.
   Key results always qualify: they're objective-linked by construction.
-- **🔔 Nudges** — the embedded agent. A deterministic, explainable analyzer
+- **Impact** — per-member impact cards: hours vs allocation, comms volume,
+  objective touch, an explained 0–100 score, and a trend arrow. Pod hero with
+  utilization, message volume, objectives on-track, and average progress.
+- **Nudges** — the embedded agent. A deterministic, explainable analyzer
   reads time, comms, and objective health and gives **soft** executive nudges:
   quiet members, at-risk objectives, overdue important tasks, praise for wins.
   No alarming language, ever — a test enforces it.
@@ -57,6 +71,8 @@ Podium must be running first. No database, no build step, zero dependencies.
 | `GET /api/x/focus?pod_id=` | important tasks + key results |
 | `GET /api/x/nudges?pod_id=` | soft executive nudges |
 | `GET /api/x/objectives?pod_id=` | objectives passthrough |
+| `GET /api/x/briefing?pod_id=` | agent's morning briefing |
+| `POST /api/x/refresh?pod_id=` | force a model refresh |
 
 Responses are cached 20s server-side. Everything is `GET` — podium-express is
 read-only; Podium remains the system of record.

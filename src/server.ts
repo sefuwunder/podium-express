@@ -1,17 +1,21 @@
-// podium-express — glossy mobile-first executive lens on Podium pods.
-// Speaks ONLY to Podium's HTTP API (the common-API contract). Bun + zero deps.
+// podium-express — the executive lens on Podium pods.
+//
+// Outpost-shaped server: a Transports abstraction over Podium's HTTP API,
+// a unified in-memory PodModel per pod, and a background sweep() that
+// keeps the models warm — the UI reads the model, never the network.
+// The common-API contract holds: Podium's database is never touched.
 
-import { createPodiumClient, snapshotPod, PodiumUnreachable } from "./podium";
-import { podImpact } from "./impact";
-import { buildThreads } from "./threads";
-import { buildFocus } from "./focus";
-import { generateNudges } from "./nudges";
+import { createPodiumClient, PodiumUnreachable } from "./podium";
+import { realTransports } from "./channels";
+import { PodStore } from "./store";
 
 const PORT = Number(process.env.PORT || 3027);
 const PODIUM_URL = process.env.PODIUM_URL || "http://127.0.0.1:3025";
 const root = new URL("../public/", import.meta.url).pathname;
 
 const client = createPodiumClient(PODIUM_URL);
+const transports = realTransports(client);
+const store = new PodStore();
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -22,21 +26,43 @@ const TYPES: Record<string, string> = {
 };
 const json = (v: unknown, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { "Content-Type": "application/json" } });
-// short cache: snapshots are small; 20s keeps the UI snappy without hammering Podium
-const cache = new Map<string, { at: number; body: unknown }>();
-async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < ttlMs) return hit.body as T;
-  const body = await fn();
-  cache.set(key, { at: Date.now(), body });
-  if (cache.size > 60) cache.delete(cache.keys().next().value);
-  return body;
-}
+
 const needPod = (url: URL) => {
   const podId = url.searchParams.get("pod_id");
   if (!podId) throw Object.assign(new Error("pod_id required"), { status: 400 });
   return podId;
 };
+
+/** Model for a pod, refreshing in the background when stale or missing. */
+async function modelFor(podId: string) {
+  const cached = store.get(podId);
+  if (cached && Date.now() - new Date(cached.fetchedAt).getTime() < 60_000) return cached;
+  return store.refresh(podId, transports);
+}
+
+// ---------- background sweep (outpost pattern: best-effort, never overlapping) ----------
+let sweeping = false;
+async function sweep() {
+  if (sweeping) return;
+  sweeping = true;
+  try {
+    // Warm every pod the UI has touched; the first sweep also discovers pods.
+    let ids = store.podIds();
+    if (!ids.length) {
+      try {
+        ids = (await transports.fetchPods()).map((p) => p.id);
+      } catch { /* Podium down — try again next sweep */ }
+    }
+    for (const id of ids) {
+      try { await store.refresh(id, transports); }
+      catch { /* one sick pod must not blind the others */ }
+    }
+  } finally {
+    sweeping = false;
+  }
+}
+setInterval(sweep, 60_000);
+sweep();
 
 Bun.serve({
   port: PORT,
@@ -45,53 +71,42 @@ Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
     try {
-      // ----- express API -----
+      // ----- express API (all reads come from the unified model) -----
       if (path === "/api/x/health") {
-        const ok = await client.health();
+        const ok = await transports.ping();
         return json({ podium_url: PODIUM_URL, podium_ok: ok });
       }
       if (path === "/api/x/pods") {
-        const pods = await cached("pods", 20000, () => client.pods());
+        const pods = await transports.fetchPods();
         return json({ pods });
       }
+      if (path === "/api/x/briefing") {
+        const m = await modelFor(needPod(url));
+        return json({ briefing: m.agent.briefing, generatedAt: m.agent.generatedAt, podName: m.podName });
+      }
       if (path === "/api/x/impact") {
-        const podId = needPod(url);
-        const body = await cached(`impact:${podId}`, 20000, async () => {
-          const snap = await snapshotPod(client, podId);
-          const msgs = snap.messagesByChannel.flatMap((x) => x.messages);
-          return { impact: podImpact(podId, snap.members, snap.entries, msgs, snap.objectives, snap.windowDays) };
-        });
-        return json(body);
+        const m = await modelFor(needPod(url));
+        return json({ impact: m.impact, fetchedAt: m.fetchedAt });
       }
       if (path === "/api/x/threads") {
-        const podId = needPod(url);
-        const body = await cached(`threads:${podId}`, 20000, async () => {
-          const snap = await snapshotPod(client, podId);
-          const nameOf = (pid: string) => snap.members.find((m) => m.person_id === pid)?.person_name || pid;
-          return { threads: buildThreads(snap.messagesByChannel, nameOf) };
-        });
-        return json(body);
+        const m = await modelFor(needPod(url));
+        return json({ threads: m.threads, fetchedAt: m.fetchedAt });
       }
       if (path === "/api/x/focus") {
-        const podId = needPod(url);
-        const body = await cached(`focus:${podId}`, 20000, async () => {
-          const snap = await snapshotPod(client, podId);
-          return { focus: buildFocus(snap.tasks, snap.objectives) };
-        });
-        return json(body);
+        const m = await modelFor(needPod(url));
+        return json({ focus: m.focus, fetchedAt: m.fetchedAt });
       }
       if (path === "/api/x/nudges") {
-        const podId = needPod(url);
-        const body = await cached(`nudges:${podId}`, 20000, async () => {
-          const snap = await snapshotPod(client, podId);
-          return { nudges: generateNudges(snap) };
-        });
-        return json(body);
+        const m = await modelFor(needPod(url));
+        return json({ nudges: m.agent.nudges, fetchedAt: m.fetchedAt });
       }
       if (path === "/api/x/objectives") {
-        const podId = needPod(url);
-        const objectives = await cached(`obj:${podId}`, 20000, () => client.objectives(podId));
-        return json({ objectives });
+        const m = await modelFor(needPod(url));
+        return json({ objectives: m.objectives });
+      }
+      if (path === "/api/x/refresh" && req.method === "POST") {
+        const m = await store.refresh(needPod(url), transports);
+        return json({ ok: true, fetchedAt: m.fetchedAt });
       }
 
       // ----- static -----
